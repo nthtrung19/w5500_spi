@@ -1,0 +1,114 @@
+#include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/spi_master.h"
+#include "driver/gpio.h"
+#include "wizchip_conf.h"
+#include "w5500.h"
+
+// 1. ĐỊNH NGHĨA PHẦN CỨNG (giữ nguyên)
+//================================================================
+#define PIN_MOSI 11
+#define PIN_MISO 13
+#define PIN_SCLK 12
+#define PIN_CS   10
+#define SPI_HOST SPI2_HOST
+
+static spi_device_handle_t spi_handle;
+
+// 2. CÁC HÀM CALLBACK (giữ nguyên)
+//================================================================
+void my_cs_select(void) { gpio_set_level(PIN_CS, 0); }
+void my_cs_deselect(void) { gpio_set_level(PIN_CS, 1); }
+uint8_t my_spi_readbyte(void) {
+    uint8_t rx_data = 0;
+    spi_transaction_t t = {.length = 8, .tx_buffer = NULL, .rx_buffer = &rx_data};
+    assert(spi_device_polling_transmit(spi_handle, &t) == ESP_OK);
+    return rx_data;
+}
+void my_spi_writebyte(uint8_t wb) {
+    spi_transaction_t t = {.length = 8, .tx_buffer = &wb, .rx_buffer = NULL};
+    assert(spi_device_polling_transmit(spi_handle, &t) == ESP_OK);
+}
+
+// 3. HÀM MAIN CỦA ỨNG DỤNG
+//================================================================
+void app_main(void) {
+    // --- KHỞI TẠO ---
+    printf("Initializing W5500...\n");
+    // Khởi tạo GPIO, đăng ký callback
+    gpio_config_t cs_gpio_config = {.pin_bit_mask = (1ULL << PIN_CS), .mode = GPIO_MODE_OUTPUT};
+    gpio_config(&cs_gpio_config);
+    gpio_set_level(PIN_CS, 1);
+    spi_bus_config_t bus_cfg = {.mosi_io_num=PIN_MOSI, .miso_io_num=PIN_MISO, .sclk_io_num=PIN_SCLK, .quadwp_io_num=-1, .quadhd_io_num=-1, .max_transfer_sz=4094};
+    ESP_ERROR_CHECK(spi_bus_initialize(SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO));
+    spi_device_interface_config_t dev_cfg = {.clock_speed_hz = 4 * 1000 * 1000, .mode = 0, .spics_io_num = -1, .queue_size=7};
+    ESP_ERROR_CHECK(spi_bus_add_device(SPI_HOST, &dev_cfg, &spi_handle));
+    reg_wizchip_cs_cbfunc(my_cs_select, my_cs_deselect);
+    reg_wizchip_spi_cbfunc(my_spi_readbyte, my_spi_writebyte);
+    wizchip_init(NULL, NULL);
+
+    // --- BƯỚC 1: KIỂM TRA GIAO TIẾP SPI ---
+    uint8_t version = getVERSIONR();
+    printf("============================================\n");
+    printf("Step 1: Checking SPI Communication...\n");
+    if (version != 0x04) {
+        printf(">> ERROR: SPI communication failed. Halting.\n");
+        return;
+    }
+    printf(">> SUCCESS: SPI communication is OK. (Version: 0x%02X)\n", version);
+
+    // --- BƯỚC 2: KIỂM TRA KẾT NỐI VẬT LÝ ETHERNET ---
+    printf("Step 2: Checking Ethernet Physical Link Status...\n");
+    uint8_t phy_status;
+    do {
+        phy_status = getPHYCFGR();
+        if (!(phy_status & PHYCFGR_LNK_ON)) {
+            printf("Waiting for Ethernet cable to be connected...\n");
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+        }
+    } while (!(phy_status & PHYCFGR_LNK_ON));
+    printf(">> SUCCESS: Ethernet Link is UP.\n");
+
+    // --- BƯỚC 3: CẤU HÌNH THÔNG TIN MẠNG (IP TĨNH) ---
+    printf("Step 3: Configuring Static Network Information...\n");
+
+    wiz_NetInfo net_info = {
+        // Địa chỉ MAC - Bạn có thể chọn một địa chỉ ngẫu nhiên
+        .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56},
+        // --- !!! CẤU HÌNH CHO KẾT NỐI TRỰC TIẾP VỚI LAPTOP !!! ---
+        .ip = {192, 168, 1, 101},          // Địa chỉ IP của W5500 (PHẢI KHÁC IP LAPTOP)
+        .sn = {255, 255, 255, 0},         // Subnet Mask (PHẢI GIỐNG LAPTOP)
+        .gw = {0, 0, 0, 0},               // Gateway (ĐỂ TRỐNG vì không có router)
+        .dns = {0, 0, 0, 0},              // DNS (ĐỂ TRỐNG vì không có router)
+        .dhcp = NETINFO_STATIC            // Chỉ định rằng chúng ta đang dùng IP tĩnh
+    };
+
+    // Áp dụng cấu hình mạng
+    wizchip_setnetinfo(&net_info);
+
+    // --- KIỂM TRA LẠI CẤU HÌNH ĐÃ GHI ---
+    printf("Verifying network configuration...\n");
+    wiz_NetInfo verify_net_info;
+    wizchip_getnetinfo(&verify_net_info);
+
+    printf("  - MAC Address: %02X:%02X:%02X:%02X:%02X:%02X\n",
+           verify_net_info.mac[0], verify_net_info.mac[1], verify_net_info.mac[2],
+           verify_net_info.mac[3], verify_net_info.mac[4], verify_net_info.mac[5]);
+    printf("  - IP Address:  %d.%d.%d.%d\n",
+           verify_net_info.ip[0], verify_net_info.ip[1], verify_net_info.ip[2], verify_net_info.ip[3]);
+    printf("  - Subnet Mask: %d.%d.%d.%d\n",
+           verify_net_info.sn[0], verify_net_info.sn[1], verify_net_info.sn[2], verify_net_info.sn[3]);
+    printf("  - Gateway:     %d.%d.%d.%d\n",
+           verify_net_info.gw[0], verify_net_info.gw[1], verify_net_info.gw[2], verify_net_info.gw[3]);
+    printf(">> SUCCESS: Network configuration applied.\n");
+    printf("============================================\n\n");
+    
+    printf("W5500 is now on the network with IP 192.168.1.101\n");
+    printf("You can now PING it from your laptop.\n\n");
+
+    // Dừng chương trình ở đây để chờ ping
+    while(1) {
+        vTaskDelay(portMAX_DELAY);
+    }
+}

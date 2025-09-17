@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c"
+    SRCS "read_version_and_phy_register.c"
     INCLUDE_DIRS "."
     REQUIRES Ethernet
 )
