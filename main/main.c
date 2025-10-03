@@ -162,8 +162,6 @@ void app_main()
             uint8_t socket_irq_mask = Sn_IR_RECV ;
             setSn_IMR(TCP_SOCKET_NUM, socket_irq_mask);
             setSIMR(1);
-
-
         }
         else if(sn_sr == SOCK_ESTABLISHED)
         {
@@ -187,7 +185,6 @@ void app_main()
                         char* response_msg = "OK: LED is ON";
                         send(TCP_SOCKET_NUM, (uint8_t*)response_msg, strlen(response_msg));
                     }
-
                 }
             }   
             ESP_LOGE(TAG, "int_status: %d, sn_cr: 0x%02X, sn_ir: 0x%02X, sn_ỉmr: 0x%02X, intlevel: %d", 
