@@ -14,7 +14,12 @@
     "--compile-commands-dir=c:\\workspace\\esp\\build"
   ],
   "files.associations": {
-    "wizchip_conf.h": "c"
+    "wizchip_conf.h": "c",
+    "set": "c",
+    "format": "c",
+    "compare": "c",
+    "cstdint": "c"
   },
-  "idf.flashType": "UART"
+  "idf.flashType": "JTAG",
+  "idf.portWin": "COM11"
 }
